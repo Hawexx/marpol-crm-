@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: marpol_crm_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: marpol_crm
+      POSTGRES_PASSWORD: marpol_crm
+      POSTGRES_DB: marpol_crm
+      TZ: Europe/Istanbul
+    ports:
+      - "5444:5432"
+    volumes:
+      - marpol_crm_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marpol_crm -d marpol_crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  marpol_crm_pgdata:

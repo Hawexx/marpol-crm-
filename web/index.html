@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/marpol.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Marpol A.Ş. Müşteri İlişkileri Yönetim Sistemi" />
+    <title>Marpol | Müşteri İlişkileri Yönetim Sistemi</title>
+
+    <!--
+      Temayı UI5 açılmadan (boot) önce ayarlar.
+
+      İki nedenle burada, modül betiklerinden önce yapılır:
+        1. UI5'in `setTheme` fonksiyonu boot tamamlanmadan çağrılırsa tema adını
+           kaydeder ama CSS'i uygulamaz - ve sonraki çağrılar "zaten bu tema"
+           diyerek erken döner. Sonuç: koyu tema seçili görünür, ekran açık kalır.
+        2. Sayfa doğrudan doğru temayla açılır; açıktan koyuya geçiş kırpışması olmaz.
+
+      Aynı yerde UI5'in dili de Türkçeye sabitlenir; aksi hâlde bileşenlerin
+      yerleşik metinleri (Cancel, Search, tablo menüleri) İngilizce kalır.
+
+      Anahtar, web/src/theme/ThemeContext.tsx içindeki STORAGE_KEY ile aynı olmalıdır.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('marpol.crm.theme');
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+          var config = document.createElement('script');
+          config.setAttribute('data-ui5-config', '');
+          config.type = 'application/json';
+          config.textContent = JSON.stringify({
+            theme: dark ? 'sap_horizon_dark' : 'sap_horizon',
+            // Arayüz tamamen Türkçe; bunu ayarlamadan UI5'in kendi metinleri
+            // ("Cancel", "Search", tablo menüleri) İngilizce kalıyordu.
+            language: 'tr',
+          });
+          document.head.appendChild(config);
+
+          document.documentElement.dataset.mpTheme = dark ? 'dark' : 'light';
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage kapalıysa varsayılan açık tema ile devam edilir. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

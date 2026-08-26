@@ -1,0 +1,1406 @@
+// Marpol Müşteri İlişkileri Yönetim Sistemi (CRM) - Veritabanı Şeması
+// PostgreSQL + Prisma
+//
+// Bölümler:
+//   1. Yetkilendirme / kullanıcı yönetimi
+//   2. Müşteri, kişi (paydaş hiyerarşisi), etkileşim, görev
+//   3. Fırsat yönetimi (uzun satış döngüsü)
+//   4. CPQ: ürün konfigüratörü, kısıtlama kuralları, dinamik maliyet, teklif revizyonları
+//   5. Doküman / teknik şartname (compliance matrix) / sözleşme yaşam döngüsü
+//   6. Sipariş + ERP-PLM entegrasyonu (Marpol PPM)
+//   7. Satış sonrası hizmetler ve saha servisi
+//   8. Denetim kaydı
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// 1. YETKİLENDİRME / KULLANICI YÖNETİMİ
+// ---------------------------------------------------------------------------
+
+/// Sistemdeki sekmeler. Yetkiler bu anahtarlar üzerinden kullanıcı bazında verilir.
+enum ModuleKey {
+  GOSTERGE_PANELI // Gösterge paneli
+  MUSTERILER      // Müşteriler, kişiler ve paydaş haritası
+  FIRSATLAR       // Satış fırsatları / pipeline
+  TEKLIFLER       // Teklifler (CPQ) ve revizyonlar
+  URUN_KATALOGU   // Ürünler, seçenekler, konfigüratör kuralları
+  FIYATLANDIRMA   // Hammadde fiyatları, işçilik/mühendislik ücretleri, fiyat politikası
+  SIPARISLER      // Siparişler ve üretim durumu (ERP)
+  DOKUMANLAR      // Teknik şartname ve doküman yönetimi
+  SOZLESMELER     // Sözleşme yaşam döngüsü
+  SAHA_SERVIS     // Satış sonrası hizmet ve saha servisi
+  RAPORLAR        // Davranış analizi ve raporlar
+  YETKILENDIRME   // Yetkilendirme paneli
+}
+
+model User {
+  id             String    @id @default(uuid())
+  username       String    @unique
+  passwordHash   String
+  fullName       String
+  employeeNo     String?   @unique
+  department     String?
+  title          String?
+  email          String?
+  phone          String?
+  isAdmin        Boolean   @default(false)
+  isActive       Boolean   @default(true)
+  /// Teklifte uygulayabileceği azami iskonto (%). Üstü onaya düşer.
+  maxDiscountPct Float     @default(5)
+  lastLoginAt    DateTime?
+  /// Sifrenin son degistirilme ani. Bu andan once uretilmis jetonlar gecersizdir,
+  /// boylece sifre degisince acik oturumlar da kapanir.
+  passwordChangedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  permissions        Permission[]
+  ownedCustomers     Customer[]            @relation("CustomerOwner")
+  ownedOpportunities Opportunity[]         @relation("OpportunityOwner")
+  interactions       Interaction[]
+  tasks              Task[]                @relation("TaskAssignee")
+  createdQuotes      Quote[]               @relation("QuoteCreatedBy")
+  approvedQuotes     Quote[]               @relation("QuoteApprovedBy")
+  createdOrders      Order[]               @relation("OrderCreatedBy")
+  requirementOwners  SpecRequirement[]     @relation("RequirementOwner")
+  contractVersions   ContractVersion[]
+  contractFiles      ContractFile[]
+  serviceTickets     ServiceTicket[]       @relation("TicketAssignee")
+  serviceVisits      ServiceVisit[]        @relation("VisitTechnician")
+  handovers          EngineeringHandover[]
+  auditLogs          AuditLog[]
+
+  @@index([isActive])
+  @@map("users")
+}
+
+/// Kullanıcı başına, sekme başına yetki satırı.
+model Permission {
+  id         String    @id @default(uuid())
+  userId     String
+  module     ModuleKey
+  canView    Boolean   @default(false)
+  canCreate  Boolean   @default(false)
+  canEdit    Boolean   @default(false)
+  canDelete  Boolean   @default(false)
+  /// Teklif onaylama, iskonto onayı, sözleşme yürürlüğe alma gibi özel işlemler
+  canApprove Boolean   @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, module])
+  @@map("permissions")
+}
+
+// ---------------------------------------------------------------------------
+// 2. MÜŞTERİ / KİŞİ / ETKİLEŞİM
+// ---------------------------------------------------------------------------
+
+/// Müşterinin pazarlık masasındaki genel tutumu.
+enum NegotiationStyle {
+  ISBIRLIKCI    // Kazan-kazan arar, bilgi paylaşır
+  REKABETCI     // Sert pazarlık, taviz koparmaya odaklı
+  FIYAT_ODAKLI  // Yalnızca fiyata bakar
+  ILISKI_ODAKLI // Uzun vadeli ilişki ve güven önceliği
+  ANALITIK      // Detay/veri ister, yavaş ama tutarlı karar verir
+  KACINGAN      // Karar ertelemeye eğilimli
+}
+
+/// Fiyat hassasiyeti - teklif stratejisini belirlemek için.
+enum PriceSensitivity {
+  DUSUK
+  ORTA
+  YUKSEK
+}
+
+enum CustomerStatus {
+  POTANSIYEL
+  AKTIF
+  PASIF
+  KARA_LISTE
+}
+
+model Customer {
+  id        String         @id @default(uuid())
+  /// Müşteri kodu - ör. MST-0001
+  code      String         @unique
+  /// Firma unvanı
+  name      String
+  /// Kısa ad / marka
+  shortName String?
+  industry  String?
+  status    CustomerStatus @default(POTANSIYEL)
+
+  /// Firma iletişim bilgileri
+  phone   String?
+  email   String?
+  website String?
+  address String?
+  city    String?
+  country String? @default("Türkiye")
+
+  taxNumber String?
+  taxOffice String?
+
+  /// Ticari koşullar
+  currency            String  @default("TRY")
+  paymentTerms        String?
+  deliveryTerms       String?
+  creditLimit         Float?
+  /// Sözleşmeli standart iskonto (%)
+  standardDiscountPct Float   @default(0)
+
+  /// Firma düzeyinde davranış profili
+  negotiationStyle NegotiationStyle?
+  priceSensitivity PriceSensitivity?
+  /// Firma hakkında serbest notlar
+  notes            String?
+  /// Pazarlık geçmişi ve davranış gözlemleri
+  behaviorNotes    String?
+  /// Bilinen rakipler / tedarikçiler
+  competitors      String?
+
+  ownerId   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner         User?            @relation("CustomerOwner", fields: [ownerId], references: [id])
+  contacts      Contact[]
+  interactions  Interaction[]
+  tasks         Task[]
+  opportunities Opportunity[]
+  quotes        Quote[]
+  orders        Order[]
+  documents     Document[]
+  specDocuments SpecDocument[]
+  contracts     Contract[]
+  assets        InstalledAsset[]
+  tickets       ServiceTicket[]
+
+  @@index([status])
+  @@index([isActive])
+  @@map("customers")
+}
+
+/// Paydaşın firmadaki departmanı - hesap hiyerarşisi haritası için.
+enum StakeholderDepartment {
+  SATIN_ALMA
+  MUHENDISLIK
+  URETIM
+  KALITE
+  FINANS
+  UST_YONETIM
+  BAKIM
+  DIGER
+}
+
+/// Paydaşın satın alma sürecindeki rolü.
+enum StakeholderRole {
+  KARAR_VERICI    // Nihai kararı veren
+  TEKNIK_ONAYCI   // Teknik uygunluğu onaylayan
+  EKONOMIK_ONAYCI // Bütçeyi onaylayan
+  KULLANICI       // Ürünü kullanacak taraf
+  KAPI_BEKCISI    // Erişimi kontrol eden (asistan, satın alma uzmanı)
+  ETKILEYICI      // Karara etki eden ama onaylamayan
+}
+
+/// Paydaşın Marpol'e karşı tutumu.
+enum Sentiment {
+  DESTEKLIYOR
+  NOTR
+  KARSIT
+}
+
+model Contact {
+  id         String @id @default(uuid())
+  customerId String
+
+  fullName String
+  title    String?
+  email    String?
+  phone    String?
+  mobile   String?
+
+  department StakeholderDepartment @default(DIGER)
+  role       StakeholderRole       @default(ETKILEYICI)
+  /// Karara etki gücü (1 = düşük, 5 = belirleyici)
+  influence  Int                   @default(3)
+  sentiment  Sentiment             @default(NOTR)
+
+  /// Kişinin pazarlığa yaklaşımı ve davranışları
+  negotiationStyle NegotiationStyle?
+  priceSensitivity PriceSensitivity?
+  /// Geri dönüş hızı / ulaşılabilirlik notu
+  responsiveness   String?
+  /// Kişi hakkında serbest notlar (ilgi alanları, hassasiyetler, geçmiş)
+  notes            String?
+
+  /// Kime bağlı çalışıyor - firma içi hiyerarşi ağacı
+  reportsToId String?
+
+  isPrimary Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer     Customer                 @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  reportsTo    Contact?                 @relation("ContactHierarchy", fields: [reportsToId], references: [id])
+  reports      Contact[]                @relation("ContactHierarchy")
+  interactions Interaction[]
+  stakeholders OpportunityStakeholder[]
+  tickets      ServiceTicket[]
+
+  @@index([customerId])
+  @@map("contacts")
+}
+
+enum InteractionType {
+  TELEFON
+  EPOSTA
+  ZIYARET
+  TOPLANTI
+  FUAR
+  DEMO
+  TEKLIF_SUNUMU
+  SERVIS
+  DIGER
+}
+
+/// Müşteri geçmiş kayıtları - her temas noktası.
+model Interaction {
+  id            String  @id @default(uuid())
+  customerId    String
+  contactId     String?
+  opportunityId String?
+  userId        String?
+
+  type       InteractionType @default(TELEFON)
+  subject    String
+  summary    String?
+  /// Görüşmenin sonucu / alınan aksiyon
+  outcome    String?
+  sentiment  Sentiment       @default(NOTR)
+  occurredAt DateTime        @default(now())
+  /// Sonraki temas için planlanan tarih
+  followUpAt DateTime?
+  createdAt  DateTime        @default(now())
+
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contact     Contact?     @relation(fields: [contactId], references: [id])
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
+  user        User?        @relation(fields: [userId], references: [id])
+
+  @@index([customerId, occurredAt])
+  @@map("interactions")
+}
+
+enum TaskStatus {
+  ACIK
+  TAMAMLANDI
+  IPTAL
+}
+
+/// Görev / hatırlatıcı.
+model Task {
+  id            String  @id @default(uuid())
+  customerId    String?
+  opportunityId String?
+  assigneeId    String?
+
+  title       String
+  description String?
+  dueAt       DateTime
+  status      TaskStatus @default(ACIK)
+  completedAt DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([status, dueAt])
+  @@map("tasks")
+}
+
+// ---------------------------------------------------------------------------
+// 3. FIRSAT YÖNETİMİ (uzun satış döngüsü)
+// ---------------------------------------------------------------------------
+
+enum OpportunityStage {
+  KESIF                // İlk temas / ihtiyaç keşfi
+  NITELENDIRME         // Bütçe-yetki-ihtiyaç-zaman doğrulaması
+  TEKNIK_DEGERLENDIRME // Şartname ve teknik uygunluk
+  TEKLIF               // Teklif hazırlandı/gönderildi
+  PAZARLIK             // Ticari pazarlık
+  KAZANILDI
+  KAYBEDILDI
+}
+
+model Opportunity {
+  id         String @id @default(uuid())
+  /// Fırsat kodu - ör. FRS-2026-0001
+  code       String @unique
+  customerId String
+
+  title             String
+  description       String?
+  stage             OpportunityStage @default(KESIF)
+  /// Kazanma olasılığı (%) - aşamaya göre önerilir, elle değiştirilebilir
+  probability       Float            @default(10)
+  /// Beklenen proje değeri
+  expectedValue     Float            @default(0)
+  currency          String           @default("TRY")
+  expectedCloseDate DateTime?
+  /// Satış döngüsünün başladığı tarih
+  openedAt          DateTime         @default(now())
+  closedAt          DateTime?
+
+  source     String?
+  competitor String?
+  /// Kaybedildiyse gerekçe
+  lossReason String?
+  notes      String?
+
+  ownerId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer      Customer                  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  owner         User?                     @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  stakeholders  OpportunityStakeholder[]
+  stageHistory  OpportunityStageHistory[]
+  quotes        Quote[]
+  orders        Order[]
+  interactions  Interaction[]
+  tasks         Task[]
+  documents     Document[]
+  specDocuments SpecDocument[]
+
+  @@index([stage])
+  @@index([customerId])
+  @@map("opportunities")
+}
+
+/// Bu fırsatta hangi paydaş hangi rolde - karar haritası.
+model OpportunityStakeholder {
+  id            String          @id @default(uuid())
+  opportunityId String
+  contactId     String
+  role          StakeholderRole @default(ETKILEYICI)
+  influence     Int             @default(3)
+  sentiment     Sentiment       @default(NOTR)
+  notes         String?
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  contact     Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([opportunityId, contactId])
+  @@map("opportunity_stakeholders")
+}
+
+model OpportunityStageHistory {
+  id            String            @id @default(uuid())
+  opportunityId String
+  fromStage     OpportunityStage?
+  toStage       OpportunityStage
+  note          String?
+  changedAt     DateTime          @default(now())
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+  @@map("opportunity_stage_history")
+}
+
+// ---------------------------------------------------------------------------
+// 4. CPQ - ÜRÜN KONFİGÜRATÖRÜ, DİNAMİK MALİYET, TEKLİF REVİZYONLARI
+// ---------------------------------------------------------------------------
+
+/// Hammadde - güncel fiyatı maliyet hesabına doğrudan girer.
+model Material {
+  id       String  @id @default(uuid())
+  code     String  @unique
+  name     String
+  category String?
+  unit     String  @default("kg")
+
+  /// Güncel birim fiyat
+  currentPrice   Float    @default(0)
+  currency       String   @default("TRY")
+  priceUpdatedAt DateTime @default(now())
+  /// Fire oranı (%) - maliyete eklenir
+  scrapPct       Float    @default(0)
+
+  supplier  String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  priceHistory MaterialPriceHistory[]
+  bomLines     BomLine[]
+  serviceParts ServicePart[]
+
+  @@index([isActive])
+  @@map("materials")
+}
+
+model MaterialPriceHistory {
+  id         String   @id @default(uuid())
+  materialId String
+  price      Float
+  currency   String   @default("TRY")
+  validFrom  DateTime @default(now())
+  source     String?
+  note       String?
+
+  material Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  @@index([materialId, validFrom])
+  @@map("material_price_history")
+}
+
+enum RateKind {
+  ISCILIK     // Atölye işçiliği
+  MUHENDISLIK // Tasarım / mühendislik eforu
+  SAHA_SERVIS // Saha servis teknisyeni
+}
+
+/// Saatlik işçilik ve mühendislik ücretleri.
+model LaborRate {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  name       String
+  kind       RateKind @default(ISCILIK)
+  hourlyRate Float
+  currency   String   @default("TRY")
+  notes      String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  laborLines LaborLine[]
+  visits     ServiceVisit[]
+
+  @@index([isActive])
+  @@map("labor_rates")
+}
+
+/// Fiyat politikası - maliyetin üzerine eklenen yükler ve hedef kâr marjı.
+model PricingPolicy {
+  id   String @id @default(uuid())
+  code String @unique
+  name String
+
+  /// Genel üretim giderleri (%)
+  overheadPct     Float @default(12)
+  /// Mühendislik/proje yönetim yükü (%)
+  engineeringPct  Float @default(8)
+  /// Risk payı (%)
+  contingencyPct  Float @default(5)
+  /// Hedef kâr marjı (%)
+  targetMarginPct Float @default(25)
+  /// Bu marjın altına inen teklifler onaya düşer (%)
+  minMarginPct    Float @default(12)
+
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  quotes Quote[]
+
+  @@map("pricing_policies")
+}
+
+model Product {
+  id          String  @id @default(uuid())
+  code        String  @unique
+  name        String
+  family      String?
+  description String?
+  unit        String  @default("adet")
+
+  /// Konfigüre edilebilir ürün mü? (Siparişe özel üretim)
+  isConfigurable Boolean @default(true)
+  /// Standart ürünler için liste fiyatı
+  listPrice      Float?
+  /// Konfigürasyondan bağımsız sabit temel maliyet
+  baseCost       Float   @default(0)
+  leadTimeDays   Int     @default(30)
+
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  optionGroups OptionGroup[]
+  rules        ConfigRule[]
+  bomLines     BomLine[]
+  laborLines   LaborLine[]
+  quoteItems   QuoteItem[]
+  orderItems   OrderItem[]
+  assets       InstalledAsset[]
+
+  @@index([isActive])
+  @@map("products")
+}
+
+/// Konfigüratördeki seçenek grubu - ör. "Gövde Malzemesi", "Tahrik Tipi".
+model OptionGroup {
+  id         String  @id @default(uuid())
+  productId  String
+  code       String
+  name       String
+  /// Zorunlu grup ise konfigürasyon tamamlanmadan teklif verilemez
+  isRequired Boolean @default(true)
+  /// Birden fazla seçenek işaretlenebilir mi
+  isMultiple Boolean @default(false)
+  sortOrder  Int     @default(0)
+  helpText   String?
+
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options ProductOption[]
+
+  @@unique([productId, code])
+  @@map("option_groups")
+}
+
+model ProductOption {
+  id          String  @id @default(uuid())
+  groupId     String
+  code        String
+  name        String
+  description String?
+
+  /// Bu seçeneğin maliyete etkisi
+  costDelta     Float @default(0)
+  /// Fiyata doğrudan etkisi (maliyetten bağımsız ek)
+  priceDelta    Float @default(0)
+  /// Termine etkisi (gün)
+  leadTimeDelta Int   @default(0)
+  /// Ek işçilik (saat)
+  laborHours    Float @default(0)
+  /// Serbest teknik nitelikler (basınç, sıcaklık, malzeme sınıfı vb.)
+  attributes    Json?
+
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  group            OptionGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  quoteItemOptions QuoteItemOption[]
+
+  @@unique([groupId, code])
+  @@map("product_options")
+}
+
+/// Kısıtlama kuralı tipi.
+enum RuleType {
+  GEREKTIRIR // A seçilirse B de seçilmelidir
+  ENGELLER   // A seçilirse B seçilemez
+  UYARIR     // A + B riskli, engellenmez ama uyarı verilir
+}
+
+enum RuleSeverity {
+  ENGELLE // Teklif verilemez
+  UYAR    // Uyarı gösterilir, satışçı devam edebilir
+}
+
+/// Mühendislik açısından imkansız/riskli kombinasyonları engelleyen kural.
+model ConfigRule {
+  id        String @id @default(uuid())
+  productId String
+  code      String
+  name      String
+
+  type     RuleType     @default(ENGELLER)
+  severity RuleSeverity @default(ENGELLE)
+
+  /// Kuralın tetiklendiği seçenek kodları (hepsi seçiliyse tetiklenir)
+  whenOptions String[]
+  /// Kuralın hedeflediği seçenek kodları
+  thenOptions String[]
+  /// Kullanıcıya gösterilecek açıklama
+  message     String
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, code])
+  @@map("config_rules")
+}
+
+enum QuoteStatus {
+  TASLAK
+  ONAY_BEKLIYOR // Marj/iskonto onayı bekliyor
+  GONDERILDI
+  PAZARLIK
+  KABUL_EDILDI
+  REDDEDILDI
+  SURESI_DOLDU
+  REVIZE_EDILDI // Yerine yeni revizyon geçti
+}
+
+/// Teklif. Revizyonlar aynı kök teklife bağlı ayrı kayıtlar olarak tutulur (Rev A, Rev B ...).
+model Quote {
+  id            String  @id @default(uuid())
+  /// Teklif no - ör. TKF-2026-0001
+  quoteNo       String
+  /// Revizyon sırası (0 = Rev A, 1 = Rev B ...)
+  revision      Int     @default(0)
+  /// Revizyon zincirinin ilk teklifi. Kök teklifte kendi id'si.
+  rootQuoteId   String?
+  parentQuoteId String?
+  /// Zincirdeki güncel revizyon mu
+  isCurrent     Boolean @default(true)
+  /// Bu revizyonun neden açıldığı
+  revisionNote  String?
+
+  customerId    String
+  opportunityId String?
+  policyId      String?
+
+  title      String
+  status     QuoteStatus @default(TASLAK)
+  currency   String      @default("TRY")
+  issuedAt   DateTime    @default(now())
+  validUntil DateTime?
+  sentAt     DateTime?
+  decidedAt  DateTime?
+
+  /// Kalem toplamı (iskonto öncesi satış)
+  subtotal       Float @default(0)
+  /// Genel iskonto (%)
+  discountPct    Float @default(0)
+  discountAmount Float @default(0)
+  /// Toplam maliyet (BOM + işçilik + mühendislik + yükler)
+  totalCost      Float @default(0)
+  /// Müşteriye çıkan tutar
+  totalPrice     Float @default(0)
+  /// Gerçekleşen kâr marjı (%)
+  marginPct      Float @default(0)
+
+  paymentTerms  String?
+  deliveryTerms String?
+  leadTimeDays  Int?
+  terms         String?
+  notes         String?
+
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+  /// Onay gerekiyorsa gerekçe (marj/iskonto limiti aşımı)
+  approvalNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity Opportunity?   @relation(fields: [opportunityId], references: [id])
+  policy      PricingPolicy? @relation(fields: [policyId], references: [id])
+  createdBy   User?          @relation("QuoteCreatedBy", fields: [createdById], references: [id])
+  approvedBy  User?          @relation("QuoteApprovedBy", fields: [approvedById], references: [id])
+  parent      Quote?         @relation("QuoteRevisions", fields: [parentQuoteId], references: [id])
+  revisions   Quote[]        @relation("QuoteRevisions")
+
+  items         QuoteItem[]
+  orders        Order[]
+  documents     Document[]
+  specDocuments SpecDocument[]
+
+  @@unique([quoteNo, revision])
+  @@index([customerId])
+  @@index([status])
+  @@index([rootQuoteId])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id        String  @id @default(uuid())
+  quoteId   String
+  productId String?
+
+  description String
+  quantity    Float  @default(1)
+  unit        String @default("adet")
+
+  /// Hesaplanan birim maliyet (BOM + işçilik + mühendislik + yükler)
+  unitCost     Float @default(0)
+  /// Birim satış fiyatı
+  unitPrice    Float @default(0)
+  discountPct  Float @default(0)
+  lineTotal    Float @default(0)
+  lineCost     Float @default(0)
+  marginPct    Float @default(0)
+  leadTimeDays Int   @default(0)
+
+  /// Konfigüratörden seçilen değerlerin anlık görüntüsü
+  configSnapshot Json?
+  notes          String?
+  sortOrder      Int     @default(0)
+
+  quote        Quote             @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product      Product?          @relation(fields: [productId], references: [id])
+  options      QuoteItemOption[]
+  bomLines     BomLine[]
+  laborLines   LaborLine[]
+  requirements SpecRequirement[]
+
+  @@index([quoteId])
+  @@map("quote_items")
+}
+
+/// Teklif kaleminde seçilen konfigürasyon seçeneği.
+model QuoteItemOption {
+  id          String @id @default(uuid())
+  quoteItemId String
+  optionId    String
+  /// Seçim anındaki maliyet/fiyat etkisi (sonradan değişse de teklif sabit kalır)
+  costDelta   Float  @default(0)
+  priceDelta  Float  @default(0)
+
+  quoteItem QuoteItem     @relation(fields: [quoteItemId], references: [id], onDelete: Cascade)
+  option    ProductOption @relation(fields: [optionId], references: [id])
+
+  @@unique([quoteItemId, optionId])
+  @@map("quote_item_options")
+}
+
+/// Malzeme listesi satırı (BOM). Teklif aşamasında girilir, sipariş onayında mühendisliğe akar.
+model BomLine {
+  id          String  @id @default(uuid())
+  quoteItemId String?
+  /// Ürünün standart BOM'u (teklife kopyalanır)
+  productId   String?
+  materialId  String?
+
+  description String
+  quantity    Float  @default(1)
+  unit        String @default("adet")
+  /// Hesaplama anındaki birim fiyat
+  unitCost    Float  @default(0)
+  scrapPct    Float  @default(0)
+  lineCost    Float  @default(0)
+  /// Mühendislik revizyon işareti - ör. "A"
+  revision    String @default("A")
+  notes       String?
+  sortOrder   Int    @default(0)
+
+  quoteItem QuoteItem? @relation(fields: [quoteItemId], references: [id], onDelete: Cascade)
+  product   Product?   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  material  Material?  @relation(fields: [materialId], references: [id])
+
+  @@index([quoteItemId])
+  @@index([productId])
+  @@map("bom_lines")
+}
+
+/// İşçilik / mühendislik eforu satırı.
+model LaborLine {
+  id          String  @id @default(uuid())
+  quoteItemId String?
+  productId   String?
+  rateId      String
+
+  description String?
+  hours       Float   @default(0)
+  hourlyRate  Float   @default(0)
+  lineCost    Float   @default(0)
+  sortOrder   Int     @default(0)
+
+  quoteItem QuoteItem? @relation(fields: [quoteItemId], references: [id], onDelete: Cascade)
+  product   Product?   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  rate      LaborRate  @relation(fields: [rateId], references: [id])
+
+  @@index([quoteItemId])
+  @@map("labor_lines")
+}
+
+// ---------------------------------------------------------------------------
+// 5. DOKÜMAN / TEKNİK ŞARTNAME / SÖZLEŞME
+// ---------------------------------------------------------------------------
+
+enum DocumentType {
+  TEKNIK_SARTNAME
+  CIZIM
+  SERTIFIKA
+  TEST_RAPORU
+  SUNUM
+  YAZISMA
+  DIGER
+}
+
+model Document {
+  id            String  @id @default(uuid())
+  customerId    String?
+  opportunityId String?
+  quoteId       String?
+  orderId       String?
+
+  type     DocumentType @default(DIGER)
+  title    String
+  docNo    String?
+  version  String       @default("1.0")
+  /// Dosya adı (yükleme dizinindeki karşılığı)
+  fileName String?
+  /// Harici bağlantı (paylaşılan sürücü / DMS)
+  fileUrl  String?
+  notes    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
+  quote       Quote?       @relation(fields: [quoteId], references: [id])
+  order       Order?       @relation(fields: [orderId], references: [id])
+
+  @@index([customerId])
+  @@map("documents")
+}
+
+/// Müşteriden gelen teknik şartname dokümanı.
+model SpecDocument {
+  id            String  @id @default(uuid())
+  customerId    String
+  opportunityId String?
+  quoteId       String?
+
+  title      String
+  docNo      String?
+  revision   String   @default("A")
+  receivedAt DateTime @default(now())
+  fileName   String?
+  fileUrl    String?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  opportunity  Opportunity?      @relation(fields: [opportunityId], references: [id])
+  quote        Quote?            @relation(fields: [quoteId], references: [id])
+  requirements SpecRequirement[]
+
+  @@index([customerId])
+  @@map("spec_documents")
+}
+
+/// Şartname maddesinin karşılanma durumu (Compliance Matrix satırı).
+enum ComplianceStatus {
+  KARSILANIYOR
+  KISMEN_KARSILANIYOR
+  KARSILANMIYOR
+  DEGERLENDIRILIYOR
+  KAPSAM_DISI
+}
+
+enum Criticality {
+  DUSUK
+  ORTA
+  YUKSEK
+  KRITIK
+}
+
+model SpecRequirement {
+  id             String      @id @default(uuid())
+  specDocumentId String
+  /// Şartnamedeki madde no - ör. "4.2.1"
+  clauseNo       String
+  text           String
+  category       String?
+  criticality    Criticality @default(ORTA)
+
+  status      ComplianceStatus @default(DEGERLENDIRILIYOR)
+  /// Marpol'ün maddeye cevabı / nasıl karşılandığı
+  response    String?
+  /// Karşılanmıyorsa teklif edilen alternatif
+  deviation   String?
+  ownerId     String?
+  /// Maddeyi karşılayan teklif kalemi
+  quoteItemId String?
+
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  specDocument SpecDocument @relation(fields: [specDocumentId], references: [id], onDelete: Cascade)
+  owner        User?        @relation("RequirementOwner", fields: [ownerId], references: [id])
+  quoteItem    QuoteItem?   @relation(fields: [quoteItemId], references: [id])
+
+  @@index([specDocumentId])
+  @@map("spec_requirements")
+}
+
+enum ContractType {
+  NDA      // Gizlilik sözleşmesi
+  CERCEVE  // Çerçeve anlaşma
+  SATIS    // Satış sözleşmesi
+  GARANTI  // Garanti şartları
+  BAKIM    // Bakım / servis sözleşmesi
+  TESLIMAT // Teslimat koşulları
+  DIGER
+}
+
+enum ContractStatus {
+  TASLAK
+  INCELEMEDE
+  IMZA_BEKLIYOR
+  YURURLUKTE
+  SONA_ERDI
+  FESHEDILDI
+}
+
+model Contract {
+  id         String @id @default(uuid())
+  contractNo String @unique
+  customerId String
+
+  type   ContractType   @default(SATIS)
+  status ContractStatus @default(TASLAK)
+  title  String
+
+  startDate   DateTime?
+  endDate     DateTime?
+  /// Yenileme hatırlatma tarihi
+  renewalDate DateTime?
+  autoRenew   Boolean   @default(false)
+
+  value    Float?
+  currency String @default("TRY")
+
+  /// Garanti süresi (ay)
+  warrantyMonths Int?
+  /// Teslimat koşulu - ör. EXW, FCA, DAP
+  deliveryTerms  String?
+  paymentTerms   String?
+  /// Gecikme cezası / cezai şart
+  penaltyClause  String?
+  governingLaw   String?
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  versions ContractVersion[]
+  files    ContractFile[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("contracts")
+}
+
+/// Sözleşmenin versiyonlanmış hali - her değişiklik yeni sürüm olarak saklanır.
+model ContractVersion {
+  id         String  @id @default(uuid())
+  contractId String
+  version    Int
+  /// Bu sürümde ne değişti
+  changeNote String?
+  /// Sürümün tam metni / özeti
+  body       String?
+  fileName   String?
+  fileUrl    String?
+  isCurrent  Boolean @default(false)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation(fields: [createdById], references: [id])
+  files     ContractFile[]
+
+  @@unique([contractId, version])
+  @@map("contract_versions")
+}
+
+/// Sözleşme ekinin niteliği - taranmış kopya mı, imzaya gitmeden önceki taslak mı.
+enum ContractFileKind {
+  IMZALI_KOPYA // Islak imzalı sözleşmenin taranmış fotokopisi
+  TASLAK       // Karşı tarafa gönderilen / gelen taslak
+  EK           // Ek, zeyilname, ilave protokol
+  DIGER
+}
+
+/// Sözleşmeye yüklenen dosya (PDF / PNG / JPEG).
+/// Dosyanın kendisi diskte `uploads/` altında müşteri ve sözleşme klasöründe durur;
+/// burada yalnızca üstverisi tutulur.
+model ContractFile {
+  id         String  @id @default(uuid())
+  contractId String
+  /// İsteğe bağlı olarak belirli bir sürüme bağlanır (ör. v3'ün imzalı kopyası)
+  versionId  String?
+
+  kind ContractFileKind @default(IMZALI_KOPYA)
+  /// Kullanıcının yüklediği özgün dosya adı - indirirken bu ad kullanılır
+  originalName String
+  /// Uploads dizinine göreli saklama yolu - ör. MST-0001/SZL-2026-0001/<uuid>.pdf
+  storedPath   String  @unique
+  mimeType     String
+  sizeBytes    Int
+  notes        String?
+
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  contract   Contract         @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  version    ContractVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  uploadedBy User?            @relation(fields: [uploadedById], references: [id])
+
+  @@index([contractId])
+  @@map("contract_files")
+}
+
+// ---------------------------------------------------------------------------
+// 6. SİPARİŞ + ERP/PLM ENTEGRASYONU
+// ---------------------------------------------------------------------------
+
+enum OrderStatus {
+  ONAY_BEKLIYOR
+  ONAYLANDI
+  URETIMDE
+  KISMI_SEVK
+  SEVK_EDILDI
+  TESLIM_EDILDI
+  FATURALANDI
+  IPTAL
+}
+
+model Order {
+  id      String @id @default(uuid())
+  /// Sipariş no - ör. SPR-2026-0001
+  orderNo String @unique
+
+  customerId    String
+  quoteId       String?
+  opportunityId String?
+
+  status       OrderStatus @default(ONAY_BEKLIYOR)
+  orderDate    DateTime    @default(now())
+  /// Müşteriye taahhüt edilen teslim tarihi
+  promisedDate DateTime?
+  deliveredAt  DateTime?
+
+  currency      String  @default("TRY")
+  totalAmount   Float   @default(0)
+  /// Müşterinin kendi sipariş numarası
+  customerPoNo  String?
+  deliveryTerms String?
+  paymentTerms  String?
+  notes         String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quote       Quote?       @relation(fields: [quoteId], references: [id])
+  opportunity Opportunity? @relation(fields: [opportunityId], references: [id])
+  createdBy   User?        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+
+  items     OrderItem[]
+  history   OrderStatusHistory[]
+  documents Document[]
+  handovers EngineeringHandover[]
+  assets    InstalledAsset[]
+  tickets   ServiceTicket[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  productId String?
+
+  description String
+  quantity    Float  @default(1)
+  unit        String @default("adet")
+  unitPrice   Float  @default(0)
+  lineTotal   Float  @default(0)
+  /// Konfigürasyon anlık görüntüsü (tekliften kopyalanır)
+  configSnapshot Json?
+
+  producedQty Float @default(0)
+  shippedQty  Float @default(0)
+  sortOrder   Int   @default(0)
+
+  order   Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?         @relation(fields: [productId], references: [id])
+  erpLink ErpLink?
+  assets  InstalledAsset[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model OrderStatusHistory {
+  id         String       @id @default(uuid())
+  orderId    String
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  note       String?
+  changedAt  DateTime     @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+/// Sipariş kaleminin ERP'deki (Marpol PPM) üretim emriyle bağlantısı.
+/// "Siparişim ne durumda?" sorusunun cevabı buradan gelir.
+model ErpLink {
+  id          String @id @default(uuid())
+  orderItemId String @unique
+
+  erpSystem  String  @default("MARPOL_PPM")
+  /// PPM'deki üretim emri no - ör. UE-2026-0001
+  erpOrderNo String?
+  erpOrderId String?
+
+  /// PPM'den okunan üretim durumu
+  erpStatus     String?
+  /// Şu anda hangi proses adımında
+  currentStep   String?
+  progressPct   Float     @default(0)
+  producedQty   Float     @default(0)
+  erpDeadline   DateTime?
+  lastSyncedAt  DateTime?
+  /// Senkronizasyonda hata olduysa mesajı
+  lastSyncError String?
+  /// PPM'den dönen ham cevap
+  raw           Json?
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@map("erp_links")
+}
+
+enum HandoverStatus {
+  BEKLIYOR
+  GONDERILDI
+  KABUL_EDILDI
+  REVIZE_ISTENDI
+}
+
+/// Sipariş onaylandığında BOM'un mühendisliğe aktarımı (PLM bağlantısı).
+model EngineeringHandover {
+  id      String @id @default(uuid())
+  orderId String
+
+  status       HandoverStatus @default(BEKLIYOR)
+  /// Aktarım anındaki BOM anlık görüntüsü
+  bomSnapshot  Json?
+  sentAt       DateTime?
+  /// PPM'e aktarıldıysa oradaki karşılığı
+  erpReference String?
+  note         String?
+  responseNote String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy User? @relation(fields: [createdById], references: [id])
+
+  @@index([orderId])
+  @@map("engineering_handovers")
+}
+
+// ---------------------------------------------------------------------------
+// 7. SATIŞ SONRASI HİZMETLER VE SAHA SERVİSİ
+// ---------------------------------------------------------------------------
+
+enum AssetStatus {
+  DEVREYE_ALINDI
+  CALISIYOR
+  ARIZALI
+  BAKIMDA
+  HIZMET_DISI
+}
+
+/// Müşteri sahasına teslim edilmiş makine/sistem. Teslimat işin başlangıcıdır.
+model InstalledAsset {
+  id          String  @id @default(uuid())
+  serialNo    String  @unique
+  customerId  String
+  orderId     String?
+  orderItemId String?
+  productId   String?
+
+  name           String
+  location       String?
+  installedAt    DateTime?
+  commissionedAt DateTime?
+  warrantyStart  DateTime?
+  warrantyEnd    DateTime?
+  status         AssetStatus @default(CALISIYOR)
+  /// Periyodik bakım aralığı (ay)
+  maintenanceIntervalMonths Int?
+  lastServiceAt  DateTime?
+  nextServiceAt  DateTime?
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer  Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order     Order?          @relation(fields: [orderId], references: [id])
+  orderItem OrderItem?      @relation(fields: [orderItemId], references: [id])
+  product   Product?        @relation(fields: [productId], references: [id])
+  tickets   ServiceTicket[]
+
+  @@index([customerId])
+  @@map("installed_assets")
+}
+
+enum TicketType {
+  ARIZA
+  PERIYODIK_BAKIM
+  DEVREYE_ALMA
+  EGITIM
+  YEDEK_PARCA
+  SIKAYET
+  DIGER
+}
+
+enum TicketStatus {
+  ACIK
+  ATANDI
+  SAHADA
+  BEKLEMEDE
+  COZULDU
+  KAPANDI
+}
+
+model ServiceTicket {
+  id       String @id @default(uuid())
+  ticketNo String @unique
+
+  customerId String
+  assetId    String?
+  contactId  String?
+  orderId    String?
+
+  type     TicketType   @default(ARIZA)
+  status   TicketStatus @default(ACIK)
+  priority Criticality  @default(ORTA)
+
+  subject     String
+  description String?
+  resolution  String?
+  /// Garanti kapsamında mı (faturalanmaz)
+  isWarranty  Boolean @default(false)
+  /// Sözleşmedeki müdahale süresi (saat)
+  slaHours    Int?
+
+  openedAt DateTime  @default(now())
+  dueAt    DateTime?
+  closedAt DateTime?
+
+  assigneeId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  asset    InstalledAsset? @relation(fields: [assetId], references: [id])
+  contact  Contact?        @relation(fields: [contactId], references: [id])
+  order    Order?          @relation(fields: [orderId], references: [id])
+  assignee User?           @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  visits   ServiceVisit[]
+
+  @@index([status])
+  @@index([customerId])
+  @@map("service_tickets")
+}
+
+model ServiceVisit {
+  id       String @id @default(uuid())
+  ticketId String
+
+  technicianId String?
+  rateId       String?
+
+  plannedAt DateTime?
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  workDone   String?
+  travelKm   Float   @default(0)
+  laborHours Float   @default(0)
+  /// Toplam maliyet (işçilik + parça + yol)
+  totalCost  Float   @default(0)
+  /// Müşteriye faturalanacak mı
+  billable   Boolean @default(true)
+  customerSignedBy String?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ticket     ServiceTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  technician User?         @relation("VisitTechnician", fields: [technicianId], references: [id])
+  rate       LaborRate?    @relation(fields: [rateId], references: [id])
+  parts      ServicePart[]
+
+  @@index([ticketId])
+  @@map("service_visits")
+}
+
+model ServicePart {
+  id         String  @id @default(uuid())
+  visitId    String
+  materialId String?
+
+  description String
+  quantity    Float  @default(1)
+  unit        String @default("adet")
+  unitPrice   Float  @default(0)
+  lineTotal   Float  @default(0)
+
+  visit    ServiceVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  material Material?    @relation(fields: [materialId], references: [id])
+
+  @@index([visitId])
+  @@map("service_parts")
+}
+
+// ---------------------------------------------------------------------------
+// 8. DENETİM KAYDI
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  detail    Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,1454 @@
+/* ==========================================================================
+   Marpol CRM — kurumsal görünüm ince ayarları (SAP Fiori / Horizon üzerine)
+
+   Yapı:
+     1.  Tasarım belirteçleri (token)
+     2.  Temel yerleşim
+     3.  Yüzeyler: kart, bölüm, KPI
+     4.  Tablolar
+     5.  Form ve alanlar
+     6.  Göstergeler: ilerleme, etki, segment
+     7.  Alana özgü bileşenler (huni, konfigüratör, revizyon, evrak)
+     8.  Giriş ekranı
+     9.  ShellBar ve canlı şerit
+     10. Erişilebilirlik ve hareket tercihleri
+     11. Koyu tema düzeltmeleri
+     12. Yazdırma
+
+   Renkler her zaman bir SAP token'ı üzerinden çözülür; yedek değer yalnızca
+   token tanımsızsa devreye girer. Böylece açık/koyu tema geçişi kendiliğinden
+   çalışır ve uygulama, kardeş sistem Marpol PPM ile aynı ailede kalır.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Tasarım belirteçleri
+   -------------------------------------------------------------------------- */
+:root {
+  /* Kurumsal kimlik */
+  --marpol-red: #e30613;
+  --marpol-red-dark: #b8040f;
+
+  /* Aralık ölçeği — 4px tabanlı; sayfadaki tüm boşluklar buradan gelir */
+  --mp-space-1: 0.25rem;
+  --mp-space-2: 0.5rem;
+  --mp-space-3: 0.75rem;
+  --mp-space-4: 1rem;
+  --mp-space-5: 1.5rem;
+  --mp-space-6: 2rem;
+
+  /* Köşe yarıçapı */
+  --mp-radius-sm: 0.25rem;
+  --mp-radius-md: 0.5rem;
+  --mp-radius-lg: 0.75rem;
+  --mp-radius-pill: 999px;
+
+  /* Yükseklik (elevation) — açık temada yumuşak, koyu temada derin */
+  --mp-shadow-1: 0 1px 2px rgba(22, 27, 34, 0.06), 0 1px 3px rgba(22, 27, 34, 0.08);
+  --mp-shadow-2: 0 2px 6px rgba(22, 27, 34, 0.08), 0 4px 12px rgba(22, 27, 34, 0.06);
+  --mp-shadow-3: 0 8px 24px rgba(22, 27, 34, 0.12);
+
+  /* Kenarlık ve yüzey */
+  --mp-border: var(--sapList_BorderColor, #dfe3e8);
+  --mp-border-strong: var(--sapToolbar_SeparatorColor, #c9ced4);
+  --mp-surface: var(--sapTile_Background, #ffffff);
+  --mp-surface-sunken: var(--sapList_HeaderBackground, #f4f6f8);
+
+  /* Anlamsal renkler */
+  --mp-info: var(--sapInformativeElementColor, #0070f2);
+  --mp-good: var(--sapPositiveElementColor, #107e3e);
+  --mp-warning: var(--sapCriticalElementColor, #e76500);
+  --mp-critical: var(--sapNegativeElementColor, #bb0000);
+  --mp-neutral: var(--sapNeutralElementColor, #6a6d70);
+
+  /* Vurgu (uyarı/hata şeritlerinin zemini) — tema başına yeniden tanımlanır */
+  --mp-tint-info: rgba(0, 112, 242, 0.07);
+  --mp-tint-good: rgba(16, 126, 62, 0.08);
+  --mp-tint-warning: rgba(231, 101, 0, 0.09);
+  --mp-tint-critical: rgba(187, 0, 0, 0.07);
+
+  /* Odak halkası — özel yüzeylerde klavye odağı görünür olmalı */
+  --mp-focus-ring: 0 0 0 2px var(--sapContent_FocusColor, #0032a5);
+  --mp-focus-offset: 0 0 0 4px var(--sapBackgroundColor, #f5f6f7);
+
+  /* Katman sırası */
+  --mp-z-sticky: 2;
+  --mp-z-intro: 9999;
+
+  --mp-transition: 0.15s ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--sapFontFamily, '72', '72full', Arial, Helvetica, sans-serif);
+  background: var(--sapBackgroundColor);
+  color: var(--sapTextColor);
+  /* Türkçe metinlerde uzun kelimelerin taşmasını önler */
+  overflow-wrap: break-word;
+}
+
+/* --------------------------------------------------------------------------
+   2. Temel yerleşim
+   -------------------------------------------------------------------------- */
+.mp-page {
+  padding: var(--mp-space-4) var(--mp-space-5) var(--mp-space-6);
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+/* Detay görünümleri sekme içeriğinde açıldığında ikinci kez iç boşluk almasın */
+.mp-page .mp-page {
+  padding: 0;
+  max-width: none;
+}
+
+.mp-page__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--mp-space-4);
+  flex-wrap: wrap;
+  padding: var(--mp-space-3) 0 var(--mp-space-4);
+  border-bottom: 1px solid var(--mp-border-strong);
+  margin-bottom: var(--mp-space-4);
+}
+
+.mp-page__subtitle {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.875rem;
+  margin-top: var(--mp-space-1);
+  max-width: 80ch;
+  line-height: 1.45;
+}
+
+.mp-page__actions {
+  display: flex;
+  gap: var(--mp-space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* İki kolonlu detay yerleşimi */
+.mp-split {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: var(--mp-space-4);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .mp-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   3. Yüzeyler
+   -------------------------------------------------------------------------- */
+.mp-card {
+  background: var(--mp-surface);
+  border: 1px solid var(--sapTile_BorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-md);
+  box-shadow: var(--mp-shadow-1);
+  padding: var(--mp-space-4);
+}
+
+.mp-section {
+  background: var(--mp-surface);
+  border: 1px solid var(--sapTile_BorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-md);
+  box-shadow: var(--mp-shadow-1);
+  padding: var(--mp-space-3) var(--mp-space-4) var(--mp-space-4);
+  margin-bottom: var(--mp-space-4);
+}
+
+.mp-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mp-space-3);
+  margin-bottom: var(--mp-space-3);
+  padding-bottom: var(--mp-space-2);
+  border-bottom: 1px solid var(--mp-border);
+  flex-wrap: wrap;
+}
+
+.mp-section__title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--sapTextColor);
+  letter-spacing: 0.01em;
+}
+
+/* Boş durum — yalnızca metin yerine eylem sunabilen bir blok */
+.mp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--mp-space-2);
+  padding: var(--mp-space-6) var(--mp-space-4);
+  text-align: center;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.875rem;
+}
+
+.mp-empty__icon {
+  color: var(--mp-neutral);
+  opacity: 0.5;
+  font-size: 2rem;
+}
+
+.mp-empty__title {
+  font-weight: 600;
+  color: var(--sapTextColor);
+  font-size: 0.9375rem;
+}
+
+.mp-empty__hint {
+  max-width: 46ch;
+  line-height: 1.5;
+}
+
+/* --- KPI kutuları --- */
+.mp-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--mp-space-3);
+  margin-bottom: var(--mp-space-5);
+}
+
+.mp-kpi {
+  position: relative;
+  background: var(--mp-surface);
+  border: 1px solid var(--sapTile_BorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-md);
+  box-shadow: var(--mp-shadow-1);
+  padding: var(--mp-space-3) var(--mp-space-4);
+  overflow: hidden;
+  transition: box-shadow var(--mp-transition), transform var(--mp-transition);
+}
+
+/* Sol kenar şeridi kenarlık yerine sözde öğeyle çizilir; köşe yarıçapı bozulmaz */
+.mp-kpi::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block: 0;
+  width: 4px;
+  background: var(--mp-neutral);
+}
+
+.mp-kpi:hover {
+  box-shadow: var(--mp-shadow-2);
+}
+
+.mp-kpi__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sapContent_LabelColor);
+  font-weight: 600;
+}
+
+.mp-kpi__value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--sapTextColor);
+  font-variant-numeric: tabular-nums;
+  margin-top: var(--mp-space-1);
+}
+
+/* Rozet/bileşen taşıyan KPI'larda dev punto yerine normal akış */
+.mp-kpi__value > * {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.mp-kpi__hint {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  margin-top: var(--mp-space-1);
+  line-height: 1.35;
+}
+
+.mp-kpi--critical::before {
+  background: var(--mp-critical);
+}
+.mp-kpi--warning::before {
+  background: var(--mp-warning);
+}
+.mp-kpi--good::before {
+  background: var(--mp-good);
+}
+.mp-kpi--info::before {
+  background: var(--mp-info);
+}
+
+/* --------------------------------------------------------------------------
+   4. Tablolar
+   -------------------------------------------------------------------------- */
+
+/*
+   Yatay kaydırma kabı.
+
+   `overflow: auto` + `position: relative`, içerideki yapışkan başlığın
+   çalışabilmesi için gereklidir. Sağdaki gölge, kaydırılacak içerik olduğunu
+   görsel olarak belli eder.
+*/
+.mp-table-wrap {
+  position: relative;
+  overflow: auto;
+  border-radius: var(--mp-radius-sm);
+  background:
+    linear-gradient(to right, var(--mp-surface) 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(to right, rgba(255, 255, 255, 0), var(--mp-surface) 70%) 100% 0,
+    radial-gradient(farthest-side at 0 50%, rgba(22, 27, 34, 0.14), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(22, 27, 34, 0.14), rgba(0, 0, 0, 0)) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+/* Dikey de kaydırılabilir varyant — yükseklik sınırı verilen listeler için */
+.mp-table-wrap--scroll {
+  max-height: 22rem;
+}
+
+.mp-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+}
+
+.mp-table th,
+.mp-table td {
+  border-bottom: 1px solid var(--mp-border);
+  padding: var(--mp-space-2) var(--mp-space-3);
+  text-align: start;
+  vertical-align: top;
+}
+
+.mp-table thead th {
+  background: var(--mp-surface-sunken);
+  color: var(--sapContent_LabelColor);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: var(--mp-z-sticky);
+  /* Yapışkan başlıkta `border-bottom` kaydırmada kaybolur; kutu gölgesi kalır */
+  box-shadow: inset 0 -1px 0 var(--mp-border-strong);
+  border-bottom: none;
+}
+
+.mp-table tbody tr {
+  transition: background-color var(--mp-transition);
+}
+
+/* Zebra — yoğun tablolarda satır takibini kolaylaştırır */
+.mp-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--sapList_HeaderBackground, #f4f6f8) 45%, transparent);
+}
+
+.mp-table tbody tr:hover {
+  background: var(--sapList_Hover_Background, #eaecee);
+}
+
+.mp-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/*
+   Ad/kod tasiyan ilk sutun, cok sutunlu tablolarda 3-4 karaktere sikisip her
+   kelimeyi alt satira atiyordu. Alt sinir vererek okunur kalmasi saglanir.
+*/
+.mp-table th:first-child,
+.mp-table td:first-child {
+  min-width: 9rem;
+}
+
+.mp-table td.mp-num,
+.mp-table th.mp-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mp-table__foot td {
+  font-weight: 700;
+  border-top: 2px solid var(--mp-border-strong);
+  background: var(--mp-surface-sunken);
+  position: sticky;
+  bottom: 0;
+}
+
+/* Satır içi ikincil metin — kod, açıklama, uyarı */
+.mp-cell-sub {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+.mp-cell-alert {
+  font-size: 0.6875rem;
+  color: var(--sapNegativeTextColor, #bb0000);
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+/* Vurgulu satır — gecikmiş / riskli kayıt */
+.mp-row--overdue,
+.mp-table tbody tr.mp-row--overdue:nth-child(even) {
+  background-color: var(--mp-tint-critical) !important;
+  box-shadow: inset 3px 0 0 var(--mp-critical);
+}
+
+.mp-table tbody tr.mp-row--overdue:hover {
+  background-color: color-mix(in srgb, var(--mp-critical) 12%, transparent) !important;
+}
+
+.mp-inline-actions {
+  display: flex;
+  gap: var(--mp-space-1);
+  align-items: center;
+}
+
+/* Yetki matrisi tablosu */
+.mp-perm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.mp-perm-table th,
+.mp-perm-table td {
+  border: 1px solid var(--mp-border);
+  padding: var(--mp-space-1) var(--mp-space-2);
+  text-align: center;
+}
+
+.mp-perm-table th:first-child,
+.mp-perm-table td:first-child {
+  text-align: start;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mp-perm-table thead th {
+  background: var(--mp-surface-sunken);
+  font-weight: 600;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: var(--mp-z-sticky);
+}
+
+.mp-perm-table tbody tr:hover {
+  background: var(--sapList_Hover_Background, #eaecee);
+}
+
+/* --------------------------------------------------------------------------
+   5. Form ve alanlar
+   -------------------------------------------------------------------------- */
+.mp-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--mp-space-3) var(--mp-space-5);
+}
+
+.mp-field__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--sapContent_LabelColor);
+  font-weight: 600;
+}
+
+.mp-field__value {
+  font-size: 0.875rem;
+  color: var(--sapTextColor);
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.mp-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--mp-space-3) var(--mp-space-4);
+}
+
+.mp-form__full {
+  grid-column: 1 / -1;
+}
+
+.mp-form label {
+  display: block;
+  margin-bottom: 0.1875rem;
+}
+
+/* Alan altı yardım metni */
+.mp-hint {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  margin-top: 0.1875rem;
+  line-height: 1.35;
+}
+
+/* Native tarih girişi — UI5 Input görünümüne yaklaştırılır */
+.mp-date {
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--sapField_TextColor, #1d2d3e);
+  background: var(--sapField_Background, #fff);
+  border: 1px solid var(--sapField_BorderColor, #89919a);
+  border-radius: var(--sapField_BorderCornerRadius, var(--mp-radius-sm));
+  padding: var(--mp-space-1) var(--mp-space-2);
+  height: 2.25rem;
+}
+
+.mp-date:hover {
+  border-color: var(--sapField_Hover_BorderColor, #0070f2);
+}
+
+.mp-date:focus-visible {
+  outline: none;
+  border-color: var(--sapField_Focus_BorderColor, #0070f2);
+  box-shadow: var(--mp-focus-ring);
+}
+
+/* Uyarı / bilgi kutusu */
+.mp-note {
+  border-inline-start: 3px solid var(--mp-info);
+  background: var(--mp-tint-info);
+  padding: var(--mp-space-2) var(--mp-space-3);
+  border-radius: var(--mp-radius-sm);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin-bottom: var(--mp-space-3);
+  white-space: pre-wrap;
+}
+
+.mp-note--warning {
+  border-inline-start-color: var(--mp-warning);
+  background: var(--mp-tint-warning);
+}
+
+.mp-note--critical {
+  border-inline-start-color: var(--mp-critical);
+  background: var(--mp-tint-critical);
+}
+
+.mp-note--good {
+  border-inline-start-color: var(--mp-good);
+  background: var(--mp-tint-good);
+}
+
+/* --------------------------------------------------------------------------
+   6. Göstergeler
+   -------------------------------------------------------------------------- */
+
+/*
+   İlerleme çubuğu.
+
+   Yüzde metni önceden `mix-blend-mode: luminosity` ile basılıyordu; dolu
+   kısmın üzerinde neredeyse okunamıyordu. Bunun yerine metin, dolgunun
+   üstünde kendi kontrastıyla ve hafif bir dış hatla çizilir.
+*/
+.mp-progress {
+  position: relative;
+  height: 1.125rem;
+  min-width: 5.5rem;
+  border-radius: var(--mp-radius-pill);
+  background: var(--mp-surface-sunken);
+  border: 1px solid var(--mp-border);
+  overflow: hidden;
+}
+
+.mp-progress__fill {
+  height: 100%;
+  border-radius: var(--mp-radius-pill);
+  transition: width 0.3s ease;
+}
+
+.mp-progress__fill--info {
+  background: var(--mp-info);
+}
+.mp-progress__fill--good {
+  background: var(--mp-good);
+}
+.mp-progress__fill--warning {
+  background: var(--mp-warning);
+}
+.mp-progress__fill--critical {
+  background: var(--mp-critical);
+}
+
+.mp-progress__text {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--sapTextColor, #1d2d3e);
+  /* Hem açık zeminde hem renkli dolgu üzerinde okunur kalsın */
+  text-shadow:
+    0 0 2px var(--sapTile_Background, #fff),
+    0 0 3px var(--sapTile_Background, #fff);
+}
+
+/* Etki gücü göstergesi */
+.mp-influence {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.mp-influence__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--mp-neutral);
+  opacity: 0.3;
+}
+
+.mp-influence__dot--on {
+  background: var(--mp-info);
+  opacity: 1;
+}
+
+/* Segment dağılım çubuğu */
+.mp-seg {
+  display: flex;
+  align-items: center;
+  gap: var(--mp-space-2);
+  margin-bottom: var(--mp-space-1);
+  font-size: 0.8125rem;
+}
+
+.mp-seg__name {
+  flex: 0 0 11.5rem;
+}
+
+.mp-seg__bar {
+  flex: 1;
+  height: 0.875rem;
+  background: var(--mp-surface-sunken);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-pill);
+  overflow: hidden;
+}
+
+.mp-seg__fill {
+  display: block;
+  height: 100%;
+  background: var(--mp-info);
+  border-radius: var(--mp-radius-pill);
+}
+
+.mp-seg__count {
+  flex: 0 0 2rem;
+  text-align: end;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Paydaş hiyerarşi ağacı */
+.mp-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mp-tree ul {
+  list-style: none;
+  margin: 0;
+  padding-inline-start: var(--mp-space-5);
+  border-inline-start: 1px dashed var(--mp-border-strong);
+}
+
+.mp-tree li {
+  padding: var(--mp-space-1) 0;
+}
+
+.mp-person {
+  display: flex;
+  align-items: center;
+  gap: var(--mp-space-2);
+  flex-wrap: wrap;
+  font-size: 0.8125rem;
+}
+
+.mp-person__name {
+  font-weight: 600;
+}
+
+.mp-person__title {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+}
+
+/* --------------------------------------------------------------------------
+   7. Alana özgü bileşenler
+   -------------------------------------------------------------------------- */
+
+/* --- Fırsat hunisi --- */
+.mp-pipeline {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(15rem, 1fr);
+  gap: var(--mp-space-3);
+  overflow-x: auto;
+  padding-bottom: var(--mp-space-2);
+}
+
+.mp-stage {
+  background: var(--sapGroup_ContentBackground, #fff);
+  border: 1px solid var(--sapGroup_ContentBorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-md);
+  padding: var(--mp-space-2);
+  min-height: 9rem;
+}
+
+.mp-stage__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--mp-space-2);
+  margin-bottom: var(--mp-space-2);
+  padding-bottom: var(--mp-space-1);
+  border-bottom: 2px solid var(--mp-info);
+}
+
+.mp-stage__title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mp-stage__count {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-stage__value {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  margin-bottom: var(--mp-space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-opp-card {
+  position: relative;
+  background: var(--mp-surface);
+  border: 1px solid var(--sapTile_BorderColor, var(--mp-border));
+  border-inline-start: 3px solid var(--mp-info);
+  border-radius: var(--mp-radius-sm);
+  padding: var(--mp-space-2);
+  margin-bottom: var(--mp-space-2);
+  transition: box-shadow var(--mp-transition), border-color var(--mp-transition);
+}
+
+.mp-opp-card--clickable {
+  cursor: pointer;
+}
+
+.mp-opp-card--clickable:hover {
+  box-shadow: var(--mp-shadow-2);
+}
+
+.mp-opp-card--clickable:focus-visible {
+  outline: none;
+  box-shadow: var(--mp-focus-ring);
+}
+
+.mp-opp-card__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: 0.125rem;
+}
+
+.mp-opp-card__meta {
+  font-size: 0.6875rem;
+  color: var(--sapContent_LabelColor);
+  line-height: 1.4;
+}
+
+.mp-opp-card__value {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin-top: var(--mp-space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Konfigüratör --- */
+.mp-config {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--mp-space-4);
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .mp-config {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mp-optgroup {
+  border: 1px solid var(--sapGroup_ContentBorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-md);
+  padding: var(--mp-space-2) var(--mp-space-3);
+  margin-bottom: var(--mp-space-2);
+}
+
+.mp-optgroup__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mp-space-2);
+  margin-bottom: var(--mp-space-2);
+  flex-wrap: wrap;
+}
+
+.mp-optgroup__name {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.mp-optgroup__req {
+  font-size: 0.6875rem;
+  color: var(--sapNegativeTextColor, #bb0000);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mp-optgroup__help {
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  margin-bottom: var(--mp-space-2);
+  line-height: 1.4;
+}
+
+.mp-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--mp-space-1);
+}
+
+/*
+   Seçenek kartı.
+
+   Klavyeyle kullanılabilmesi için `role="checkbox"` + `tabindex` taşır;
+   bu yüzden görünür bir odak halkası şart.
+*/
+.mp-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mp-space-2);
+  border: 1px solid var(--sapGroup_ContentBorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-sm);
+  padding: 0.4375rem var(--mp-space-2);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  background: var(--sapGroup_ContentBackground, #fff);
+  transition: border-color var(--mp-transition), box-shadow var(--mp-transition);
+}
+
+.mp-option:hover {
+  border-color: var(--mp-info);
+}
+
+.mp-option:focus-visible {
+  outline: none;
+  border-color: var(--mp-info);
+  box-shadow: var(--mp-focus-ring);
+}
+
+.mp-option--selected {
+  border-color: var(--mp-info);
+  box-shadow: inset 0 0 0 1px var(--mp-info);
+  background: var(--mp-tint-info);
+}
+
+.mp-option--selected:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--mp-info), var(--mp-focus-ring);
+}
+
+/* Kısıtlama kuralı nedeniyle seçilemeyen seçenek */
+.mp-option--blocked {
+  opacity: 0.5;
+}
+
+.mp-option__box {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.mp-option__name {
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.mp-option__delta {
+  font-size: 0.6875rem;
+  color: var(--sapContent_LabelColor);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Maliyet dökümü --- */
+.mp-cost {
+  font-size: 0.8125rem;
+}
+
+.mp-cost__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--mp-space-3);
+  padding: var(--mp-space-1) 0;
+}
+
+.mp-cost__row--sub {
+  border-top: 1px solid var(--mp-border);
+  margin-top: var(--mp-space-1);
+  padding-top: 0.4rem;
+  font-weight: 600;
+}
+
+.mp-cost__row--total {
+  border-top: 2px solid var(--mp-border-strong);
+  margin-top: 0.4rem;
+  padding-top: var(--mp-space-2);
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+
+.mp-cost__label {
+  color: var(--sapContent_LabelColor);
+}
+
+.mp-cost__row--sub .mp-cost__label,
+.mp-cost__row--total .mp-cost__label {
+  color: var(--sapTextColor);
+}
+
+.mp-cost__value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- Revizyon zinciri --- */
+.mp-revchain {
+  display: flex;
+  gap: var(--mp-space-2);
+  flex-wrap: wrap;
+}
+
+.mp-rev {
+  border: 1px solid var(--sapGroup_ContentBorderColor, var(--mp-border));
+  border-radius: var(--mp-radius-sm);
+  padding: var(--mp-space-1) var(--mp-space-2);
+  font-size: 0.75rem;
+  cursor: pointer;
+  background: var(--sapGroup_ContentBackground, #fff);
+  min-width: 7.5rem;
+  text-align: start;
+  font-family: inherit;
+  color: inherit;
+  transition: border-color var(--mp-transition), box-shadow var(--mp-transition);
+}
+
+.mp-rev:hover {
+  border-color: var(--mp-info);
+}
+
+.mp-rev:focus-visible {
+  outline: none;
+  border-color: var(--mp-info);
+  box-shadow: var(--mp-focus-ring);
+}
+
+.mp-rev--current {
+  border-color: var(--mp-info);
+  box-shadow: inset 0 0 0 1px var(--mp-info);
+  background: var(--mp-tint-info);
+}
+
+.mp-rev__label {
+  font-weight: 700;
+  display: block;
+}
+
+.mp-rev__meta {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Sözleşme evrakı: sürükle-bırak --- */
+.mp-dropzone {
+  display: flex;
+  align-items: center;
+  gap: var(--mp-space-3);
+  padding: var(--mp-space-5);
+  border: 2px dashed var(--sapField_BorderColor, var(--mp-border-strong));
+  border-radius: var(--mp-radius-md);
+  background: var(--sapGroup_ContentBackground, #fff);
+  cursor: pointer;
+  text-align: start;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  transition: border-color var(--mp-transition), background-color var(--mp-transition);
+}
+
+.mp-dropzone:hover,
+.mp-dropzone--active {
+  border-color: var(--sapButton_Emphasized_Background, var(--mp-info));
+  background: var(--sapList_Hover_Background, #eaecee);
+}
+
+.mp-dropzone:focus-visible {
+  outline: none;
+  box-shadow: var(--mp-focus-ring);
+}
+
+.mp-dropzone__hint {
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor);
+}
+
+/* Evrak önizlemesi */
+.mp-preview {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-sm);
+  background: var(--sapGroup_ContentBackground, #fff);
+}
+
+.mp-preview--pdf {
+  height: 70vh;
+}
+
+.mp-preview--image {
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+/* --------------------------------------------------------------------------
+   8. Giriş ekranı
+   -------------------------------------------------------------------------- */
+.mp-login {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(1200px 600px at 15% 10%, rgba(227, 6, 19, 0.1), transparent 60%),
+    linear-gradient(160deg, #0a2540 0%, #123a5e 55%, #0a2540 100%);
+  padding: var(--mp-space-6) var(--mp-space-4);
+}
+
+.mp-login__panel {
+  width: min(26rem, 100%);
+  background: var(--sapGroup_ContentBackground, #fff);
+  color: var(--sapTextColor, #1d2d3e);
+  border-radius: var(--mp-radius-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: var(--mp-space-6) var(--mp-space-6) var(--mp-space-5);
+}
+
+.mp-login__logo {
+  display: block;
+  width: 13rem;
+  max-width: 100%;
+  margin: 0 auto var(--mp-space-2);
+}
+
+.mp-login__title {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--sapTextColor, #1d2d3e);
+  margin: 0 0 var(--mp-space-1);
+}
+
+.mp-login__sub {
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--sapContent_LabelColor, #556b82);
+  margin: 0 0 var(--mp-space-5);
+}
+
+.mp-login__field {
+  margin-bottom: var(--mp-space-3);
+}
+
+.mp-login__footer {
+  margin-top: var(--mp-space-5);
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--sapContent_LabelColor, #8c8c8c);
+}
+
+/* Giriş ekranı tanıtım videosu */
+.mp-intro {
+  position: fixed;
+  inset: 0;
+  z-index: var(--mp-z-intro);
+  background: #000;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+.mp-intro--closing {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mp-intro__video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.mp-intro__skip {
+  position: absolute;
+  inset-inline-end: var(--mp-space-5);
+  inset-block-end: var(--mp-space-5);
+  padding: var(--mp-space-2) 1.125rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: var(--mp-radius-pill);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background var(--mp-transition);
+}
+
+.mp-intro__skip:hover {
+  background: rgba(227, 6, 19, 0.85);
+  border-color: transparent;
+}
+
+.mp-intro__skip:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   9. ShellBar ve canlı şerit
+   -------------------------------------------------------------------------- */
+
+/* Logo çubuk yüksekliğini aşmasın diye ShellBar da birlikte yükseltilir */
+ui5-shellbar {
+  --_ui5_shellbar_root_height: 3.75rem;
+}
+
+.mp-shellbar__logo {
+  height: 3.25rem;
+  width: auto;
+  max-width: none;
+  display: block;
+}
+
+/* Uygulama kabuğu — hata şeridi dahil her şey görüntü alanı içinde kalır */
+.mp-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.mp-shell__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.mp-shell__content {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.mp-shell__alert {
+  padding: var(--mp-space-2) var(--mp-space-5) 0;
+  flex: 0 0 auto;
+}
+
+/* Dar ekranda sol menü yatay şeride döner */
+@media (max-width: 900px) {
+  .mp-shell__body {
+    flex-direction: column;
+  }
+
+  .mp-shell__body ui5-side-navigation {
+    height: auto !important;
+    width: 100%;
+  }
+
+  .mp-page {
+    padding: var(--mp-space-3) var(--mp-space-3) var(--mp-space-6);
+  }
+}
+
+.mp-ticker {
+  width: clamp(16rem, 40vw, 51rem);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
+}
+
+.mp-ticker__track {
+  display: flex;
+  width: max-content;
+  animation: mp-ticker-scroll 38s linear infinite;
+  will-change: transform;
+}
+
+/* Üzerine gelince okumak için durur */
+.mp-ticker:hover .mp-ticker__track,
+.mp-ticker:focus-within .mp-ticker__track {
+  animation-play-state: paused;
+}
+
+.mp-ticker__group {
+  display: flex;
+  align-items: center;
+  gap: 2.25rem;
+  padding-inline-end: 2.25rem;
+  white-space: nowrap;
+}
+
+.mp-ticker__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.mp-ticker__label {
+  color: var(--sapContent_LabelColor, #556b82);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.6875rem;
+}
+
+.mp-ticker__value {
+  font-weight: 700;
+  color: var(--sapTextColor, #1d2d3e);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-ticker__item--critical .mp-ticker__value,
+.mp-ticker__item--critical .mp-ticker__label {
+  color: var(--sapNegativeTextColor, #bb0000);
+}
+
+.mp-ticker__item--critical .mp-ticker__label {
+  font-weight: 700;
+}
+
+@keyframes mp-ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   10. Yükleniyor durumu, erişilebilirlik ve hareket tercihleri
+   -------------------------------------------------------------------------- */
+
+/*
+   İskelet (skeleton) yer tutucu.
+
+   Boş bir dönen çark yerine gelecek içeriğin şeklini göstermek, yükleme
+   sırasında sayfanın zıplamasını da engeller.
+*/
+.mp-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--mp-surface-sunken) 25%,
+    color-mix(in srgb, var(--mp-surface-sunken) 60%, var(--sapContent_LabelColor, #6a6d70) 12%) 37%,
+    var(--mp-surface-sunken) 63%
+  );
+  background-size: 400% 100%;
+  animation: mp-skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: var(--mp-radius-sm);
+  height: 1rem;
+}
+
+.mp-skeleton--kpi {
+  height: 5.25rem;
+  border-radius: var(--mp-radius-md);
+}
+
+.mp-skeleton--row {
+  height: 2.25rem;
+  margin-bottom: var(--mp-space-1);
+}
+
+.mp-skeleton--title {
+  height: 1.5rem;
+  width: 40%;
+  margin-bottom: var(--mp-space-3);
+}
+
+@keyframes mp-skeleton-shimmer {
+  from {
+    background-position: 100% 50%;
+  }
+  to {
+    background-position: 0 50%;
+  }
+}
+
+.mp-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Klavyeyle gezinen kullanıcı her özel yüzeyde nerede olduğunu görmeli */
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--sapContent_FocusColor, #0032a5);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mp-ticker__track,
+  .mp-skeleton {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   11. Koyu tema — SAP token'larıyla çözülmeyen özel yüzeyler
+   -------------------------------------------------------------------------- */
+:root[data-mp-theme='dark'] {
+  --mp-border: var(--sapList_BorderColor, #3a4552);
+  --mp-border-strong: var(--sapToolbar_SeparatorColor, #4a5665);
+  --mp-surface-sunken: var(--sapList_HeaderBackground, #1c2229);
+
+  /* Koyu zeminde gölge daha derin, vurgu zeminleri daha belirgin olmalı */
+  --mp-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --mp-shadow-2: 0 2px 6px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --mp-shadow-3: 0 8px 24px rgba(0, 0, 0, 0.55);
+
+  --mp-tint-info: rgba(91, 166, 255, 0.14);
+  --mp-tint-good: rgba(80, 200, 120, 0.14);
+  --mp-tint-warning: rgba(255, 150, 60, 0.16);
+  --mp-tint-critical: rgba(255, 90, 90, 0.14);
+
+  --mp-focus-offset: 0 0 0 4px var(--sapBackgroundColor, #12171c);
+}
+
+:root[data-mp-theme='dark'] .mp-login__panel {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+/* Yatay kaydırma gölgesi açık temaya göre ayarlıydı; koyu zeminde ters çevrilir */
+:root[data-mp-theme='dark'] .mp-table-wrap {
+  background:
+    linear-gradient(to right, var(--mp-surface) 30%, rgba(0, 0, 0, 0)),
+    linear-gradient(to right, rgba(0, 0, 0, 0), var(--mp-surface) 70%) 100% 0,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0)) 100% 0;
+  background-repeat: no-repeat;
+  background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+
+:root[data-mp-theme='dark'] .mp-progress__text {
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.9),
+    0 0 3px rgba(0, 0, 0, 0.7);
+}
+
+/* Marpol logosu koyu zeminde kırmızısını korur, sadece parlaklık dengelenir */
+:root[data-mp-theme='dark'] .mp-shellbar__logo {
+  filter: brightness(1.15);
+}
+
+:root[data-mp-theme='dark'] .mp-date {
+  color-scheme: dark;
+}
+
+/* --------------------------------------------------------------------------
+   12. Yazdırma — teklif/sözleşme ekranının kâğıda dökümü
+   -------------------------------------------------------------------------- */
+@media print {
+  ui5-shellbar,
+  ui5-side-navigation,
+  .mp-page__actions,
+  .mp-intro {
+    display: none !important;
+  }
+
+  .mp-shell,
+  .mp-shell__content {
+    height: auto;
+    overflow: visible;
+  }
+
+  .mp-section,
+  .mp-card,
+  .mp-kpi {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+
+  .mp-table-wrap {
+    overflow: visible;
+    background: none;
+  }
+
+  .mp-table thead th {
+    position: static;
+  }
+}
